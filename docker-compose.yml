@@ -1,0 +1,28 @@
+services:
+    sdk:
+        image: expolab/sdk:amd64
+        container_name: resid-core-backend
+        volumes:
+            - ./incubator-resilientdb:/resdb
+        ports:
+            - "18000:18000"
+        networks:
+            residentity:
+                ipv4_address: 172.22.0.2
+    web_server:
+        image: web-server-image
+        container_name: web-server-container
+        build:
+            context: ./web-backend
+            dockerfile: Dockerfile
+        ports:
+            - "8000:8000"
+        networks:
+            residentity:
+                ipv4_address: 172.22.0.3
+
+networks:
+    residentity:
+        ipam:
+            config:
+                - subnet: 172.22.0.0/24
