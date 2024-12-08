@@ -9,10 +9,7 @@ docker-compose up -d --build
 ```
 5. Run the following commands to start the ResilientDB KV service (it isn't started by default):
 ```bash
-docker exec -it resid-core-backend bash
-cd /resdb
-./INSTALL.sh
-./START.sh
+docker exec resid-core-backend bash -c "cd /resdb && ./INSTALL.sh && ./START.sh"
 ```
 6. Verify the KV service is running by running the following commands:
 ```bash

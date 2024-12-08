@@ -23,26 +23,6 @@ import modules.helpers as helpers
 import modules.res_sdk.resdb_driver as resdb_driver
 
 
-"""
-MongoDB Document Schema:
-    - documents
-        - _id
-        - document_id
-        - res_db
-            - res_id
-            - transaction
-        - s3_path
-            - bucket
-            - key
-        - public_key
-        - status_flag (1: prepared, 2: signed, 0: error)
-        - created_at
-        - updated_at
-        - __v
-
-"""
-
-
 # Startup tasks
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -89,7 +69,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ALLOW_ORIGINS").split(","),
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -207,6 +187,7 @@ async def login_user(user: models.LoginUser):
         httponly=True if os.getenv("ENVIRONMENT") == "production" else False,
         secure=True if os.getenv("ENVIRONMENT") == "production" else False,
         max_age=COOKIE_EXPIRY * 24 * 60 * 60,
+        samesite="lax" if os.getenv("ENVIRONMENT") == "production" else None,
     )
     return response
 
@@ -257,6 +238,45 @@ async def get_authenticated_user_details(token: str = Cookie(None)):
     return helpers.create_response(success=True, data=db_user)
 
 
+@app.post("/api/sign/initial")
+async def sign_initial(user: models.SignInitial, token: str = Cookie(None)):
+    if not token:
+        return helpers.create_response(
+            success=False,
+            error={"message": "Not authenticated", "code": "AUTH003"},
+            status_code=401,
+        )
+
+    try:
+        decoded_token = auth.decode_jwt(token)
+    except HTTPException as e:
+        return helpers.create_response(
+            success=False, error={"message": str(e)}, status_code=401
+        )
+    email = decoded_token.get("sub")
+
+    # Find user by email
+    db_user = app.mongo.db.users.find_one({"email": email})
+    if not db_user:
+        return helpers.create_response(
+            success=False,
+            error={"message": "User not found", "code": "USER001"},
+            status_code=404,
+        )
+
+    # Verify password
+    if not auth.verify_password(user.password, db_user["password"]):
+        return helpers.create_response(
+            success=False,
+            error={"message": "Incorrect Password", "code": "AUTH002"},
+            status_code=400,
+        )
+
+    return helpers.create_response(
+        success=True, data={"public_key": db_user.get("public_key")}
+    )
+
+
 @app.post("/api/sign/prepare")
 def sign_prepare(file: UploadFile = File(...), token: str = Cookie(None)):
     if not token:
@@ -299,6 +319,14 @@ def sign_prepare(file: UploadFile = File(...), token: str = Cookie(None)):
     # get the document id by calculating the digest
     document_id = helpers.calculate_pdf_digest(input_file_path)
 
+    # check if the document already exists in the database
+    if app.mongo.db.documents.find_one({"document_id": document_id}):
+        return helpers.create_response(
+            success=False,
+            error={"message": "Document already exists", "code": "SIGN002"},
+            status_code=400,
+        )
+
     # add document id and public key to the header of each page
     header_text = f"Document ID: {document_id} | Public Key: {public_key}"
     helpers.add_header_to_pdf(input_file_path, input_file_path, header_text)
@@ -332,7 +360,7 @@ def sign_prepare(file: UploadFile = File(...), token: str = Cookie(None)):
     helpers.generate_handwriting_style_signature(initials, font_path, signature_path)
 
     # attach signature to the file
-    output_file_path = f"{session_id}/signed-{file.filename}.pdf"
+    output_file_path = f"{session_id}/signed-{file.filename}"
     stamp_font_path = "modules/fonts/NotoSans-Regular.ttf"
     helpers.add_signature(
         input_file_path,
@@ -359,6 +387,7 @@ def sign_prepare(file: UploadFile = File(...), token: str = Cookie(None)):
         "data": {
             "document_id": document_id,
             "document_digest": document_digest,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     }
     prepared_token_tx = app.resdb.transactions.prepare(
@@ -476,7 +505,6 @@ async def verify_signature(file: UploadFile = File(...), token: str = Cookie(Non
             error={"message": "User not found", "code": "USER001"},
             status_code=404,
         )
-    public_key = db_user.get("public_key")
 
     session_id = str(bson.ObjectId())
     os.makedirs(f"{session_id}", exist_ok=True)
@@ -502,11 +530,21 @@ async def verify_signature(file: UploadFile = File(...), token: str = Cookie(Non
     # get the owner of the document
     owner = record.get("inputs")[0].get("owners_before")[0]
     owner_details = app.mongo.db.users.find_one(
-        {"public_key": owner}, {"name": 1, "country_code": 1, "_id": 0}
+        {"public_key": owner},
+        {"name": 1, "country_code": 1, "organization": 1, "_id": 0},
     )
-
-    # get document_id
     document_id = record.get("asset").get("data").get("document_id")
+    timestamp = record.get("asset").get("data").get("timestamp")
+    timestamp = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%f%z").strftime(
+        "%B %d, %Y, %H:%M:%S"
+    )
+    timestamp += " UTC"
+    required_text = f"Owner: {owner_details.get('name').get('first_name')} {owner_details.get('name').get('last_name')}"
+    required_text += f"\nCountry: {owner_details.get('country_code')}"
+    if owner_details.get("organization") and owner_details.get("organization") != "N/A":
+        required_text += f"\nOrganization: {owner_details.get('organization')}"
+    required_text += f"\nSigned at: {timestamp}"
+    required_text += f"\nDocument ID: {document_id}"
 
     # remove the temporary files. everything inside {session_id}
     for root, dirs, files in os.walk(f"{session_id}", topdown=False):
@@ -518,7 +556,7 @@ async def verify_signature(file: UploadFile = File(...), token: str = Cookie(Non
 
     return helpers.create_response(
         success=True,
-        data={"document_id": document_id, "owner": owner_details},
+        data={"ownership": required_text},
     )
 
 

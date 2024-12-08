@@ -16,3 +16,6 @@ class RegisterUser(BaseModel):
 class LoginUser(BaseModel):
     email: str
     password: str
+
+class SignInitial(BaseModel):
+    password: str
