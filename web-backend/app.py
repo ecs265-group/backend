@@ -544,7 +544,6 @@ async def verify_signature(file: UploadFile = File(...), token: str = Cookie(Non
     if owner_details.get("organization") and owner_details.get("organization") != "N/A":
         required_text += f"\nOrganization: {owner_details.get('organization')}"
     required_text += f"\nSigned at: {timestamp}"
-    required_text += f"\nDocument ID: {document_id}"
 
     # remove the temporary files. everything inside {session_id}
     for root, dirs, files in os.walk(f"{session_id}", topdown=False):
@@ -556,7 +555,7 @@ async def verify_signature(file: UploadFile = File(...), token: str = Cookie(Non
 
     return helpers.create_response(
         success=True,
-        data={"ownership": required_text},
+        data={"ownership": required_text, "document_id": document_id},
     )
 
 
