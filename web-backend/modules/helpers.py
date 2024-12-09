@@ -288,7 +288,7 @@ def add_signature(
 
     # Define the signature field specifications
     sig_field_spec = fields.SigFieldSpec(
-        sig_field_name=field_name, on_page=last_page - 1, box=(400, 50, 550, 150)
+        sig_field_name=field_name, on_page=last_page - 1, box=(375, 100, 525, 200)
     )
 
     # Load the PKCS#12 keystore
