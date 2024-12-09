@@ -187,7 +187,7 @@ async def login_user(user: models.LoginUser):
         httponly=True if os.getenv("ENVIRONMENT") == "production" else False,
         secure=True if os.getenv("ENVIRONMENT") == "production" else False,
         max_age=COOKIE_EXPIRY * 24 * 60 * 60,
-        samesite="none"
+        samesite="strict" if os.getenv("ENVIRONMENT") == "production" else "none",
     )
     return response
 
