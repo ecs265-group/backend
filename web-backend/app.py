@@ -184,7 +184,7 @@ async def login_user(user: models.LoginUser):
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        httponly=True if os.getenv("ENVIRONMENT") == "production" else False,
+        httponly=False,
         secure=True if os.getenv("ENVIRONMENT") == "production" else False,
         max_age=COOKIE_EXPIRY * 24 * 60 * 60,
         samesite="strict" if os.getenv("ENVIRONMENT") == "production" else "none",
